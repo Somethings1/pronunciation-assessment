@@ -1,0 +1,7 @@
+{
+  "name": "LingoStress: AI Pronunciation Coach",
+  "description": "A pronunciation assessment tool focusing on Phoneme-Level accuracy (CTC) and Syllable Stress detection.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
