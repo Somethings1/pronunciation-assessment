@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, DifficultyBand, WordData, AssessmentResult } from './types';
 import { getRandomWord, getWordsByBand, WORD_DATABASE } from './services/wordService';
-import { assessPronunciation } from './services/geminiService'; 
+import { assessPronunciation } from './services/assessmentService';
 import AudioRecorder from './components/AudioRecorder';
 import ResultTable from './components/ResultTable';
 import { Volume2, Trophy, ArrowRight, RotateCcw } from './components/Icons';
@@ -57,12 +57,12 @@ const App: React.FC = () => {
   // Handle Audio Upload & Assessment
   const handleRecordingComplete = async (blob: Blob) => {
     if (!currentWord) return;
-    
+
     setIsProcessing(true);
     try {
       const result = await assessPronunciation(blob, currentWord);
       setAssessmentResult(result);
-      
+
       // Check Pass Condition: Correct Stress AND Correct Phonemes
       if (result.isPhonemesCorrect && result.isStressCorrect) {
         setPassedWords(prev => {
@@ -72,7 +72,7 @@ const App: React.FC = () => {
       }
     } catch (e) {
       console.error(e);
-      alert("Error during assessment. Please try again.");
+      alert("Error during assessment. Check console or ensure server is running.");
     } finally {
       setIsProcessing(false);
     }
@@ -87,7 +87,7 @@ const App: React.FC = () => {
           Lingo<span className="text-indigo-600">Stress</span>
         </h1>
         <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-          Master English pronunciation with AI-powered assessment. 
+          Master English pronunciation with AI-powered assessment.
           Focusing on <span className="font-semibold text-indigo-600">Phoneme Accuracy</span> and <span className="font-semibold text-indigo-600">Syllable Stress</span>.
         </p>
       </div>
@@ -110,7 +110,7 @@ const App: React.FC = () => {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-600 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
                 <span className="text-4xl font-black text-slate-200 group-hover:text-indigo-100 transition-colors mb-2">{band}</span>
                 <span className="text-lg font-bold text-slate-800 group-hover:text-indigo-600">Level {band}</span>
-                
+
                 {/* Progress Bar & Stats */}
                 <div className="w-full mt-4">
                     <div className="flex justify-between text-xs text-slate-500 mb-1 font-medium">
@@ -118,8 +118,8 @@ const App: React.FC = () => {
                         <span>{passedInBand} / {totalWords}</span>
                     </div>
                     <div className="w-full bg-slate-100 rounded-full h-2">
-                        <div 
-                            className="bg-emerald-500 h-2 rounded-full transition-all duration-500" 
+                        <div
+                            className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
                             style={{ width: `${progressPercent}%` }}
                         ></div>
                     </div>
@@ -140,7 +140,7 @@ const App: React.FC = () => {
       <div className="max-w-3xl mx-auto px-4 py-8 min-h-screen flex flex-col">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
-          <button 
+          <button
             onClick={() => setAppState('MENU')}
             className="text-slate-500 hover:text-slate-800 font-medium flex items-center text-sm"
           >
@@ -153,7 +153,7 @@ const App: React.FC = () => {
 
         {/* Word Display */}
         <div className="flex-1 flex flex-col items-center">
-          
+
           {/* Success Message - Fixed centered block */}
           {isPassed && (
             <div className="w-full flex justify-center mb-8 animate-bounce">
@@ -172,7 +172,7 @@ const App: React.FC = () => {
               <span className="text-2xl text-slate-500 font-mono bg-slate-100 px-3 py-1 rounded-lg">
                 {currentWord.ipa}
               </span>
-              <button 
+              <button
                 onClick={playReferenceAudio}
                 className="p-2 rounded-full bg-indigo-100 text-indigo-600 hover:bg-indigo-200 transition-colors"
                 title="Listen to reference"
@@ -193,7 +193,7 @@ const App: React.FC = () => {
           ) : (
             <div className="w-full flex flex-col items-center animate-fade-in-up">
               <ResultTable result={assessmentResult} targetWord={currentWord} />
-              
+
               <div className="flex space-x-4 mt-8 pb-12">
                 {!isPassed && (
                   <button
@@ -204,12 +204,12 @@ const App: React.FC = () => {
                     Try Again
                   </button>
                 )}
-                
+
                 <button
                   onClick={handleNextWord}
                   className={`flex items-center px-6 py-3 rounded-lg font-semibold shadow-md transition-all transform hover:scale-105 ${
-                    isPassed 
-                      ? 'bg-emerald-500 hover:bg-emerald-600 text-white ring-4 ring-emerald-200' 
+                    isPassed
+                      ? 'bg-emerald-500 hover:bg-emerald-600 text-white ring-4 ring-emerald-200'
                       : 'bg-slate-800 hover:bg-slate-900 text-white'
                   }`}
                 >
@@ -228,11 +228,6 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 selection:text-indigo-800">
       {appState === 'MENU' && renderMenu()}
       {appState === 'PRACTICE' && renderPractice()}
-      
-      {/* Mock Mode Status Indicator */}
-      <div className="fixed bottom-4 right-4 max-w-xs bg-amber-50 border border-amber-200 text-amber-800 p-2 rounded-lg shadow text-[10px] font-mono">
-         Mock Mode (Random Results)
-      </div>
     </div>
   );
 };
