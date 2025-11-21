@@ -17,20 +17,17 @@ export interface WordData {
   stressPattern: string; // e.g. "010" (0=unstressed, 1=primary, 2=secondary)
 }
 
-export interface PhonemeError {
-  index: number; // Index in the target phoneme sequence
-  type: 'substitution' | 'deletion' | 'insertion' | 'correct';
-  expected: string;
-  actual: string;
-}
-
 export interface AssessmentResult {
-  isStressCorrect: boolean;
+  word: string;
+  overallScore: number;
   isPhonemesCorrect: boolean;
-  detectedPhonemes: string[];
-  detectedStressPattern: string;
-  phonemeErrors: PhonemeError[];
-  feedback: string;
+  isStressCorrect: boolean;
+  phonemesScore: Record<string, number>; // e.g. { "AH": -0.2, "T": -0.1 }
+  stress: {
+    truth: number[]; // [0, 1, 0]
+    infer: number[]; // [0, 1, 0]
+    syllableCount: number;
+  };
 }
 
 export type AppState = 'MENU' | 'PRACTICE' | 'LOADING';

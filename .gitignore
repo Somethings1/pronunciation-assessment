@@ -1,2 +1,3 @@
-data/mfa_input
-models
+venv/
+server/pronunciation_assessment.egg-info
+
