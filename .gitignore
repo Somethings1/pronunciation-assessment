@@ -1,3 +1,5 @@
 venv/
 server/pronunciation_assessment.egg-info
+*__pycache__*
+*.DS_Store
 

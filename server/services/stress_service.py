@@ -5,6 +5,7 @@ import io
 import json
 import os
 from server.utils.audio_features import extract_full_features
+from server.utils.audio_processor import preprocess_audio
 
 
 class StressEvaluator:
@@ -36,18 +37,7 @@ class StressEvaluator:
         if not self.model:
             return {"error": "Model chưa load"}
 
-        # 1. Load Audio
-        try:
-            y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
-        except Exception:
-            return {"error": "File audio lỗi"}
-
-        y_trimmed, index = librosa.effects.trim(y, top_db=30, frame_length=512, hop_length=128)
-
-        if len(y_trimmed) < 1600:
-            y_trimmed, _ = librosa.effects.trim(y, top_db=20)
-
-        y_normalized = librosa.util.normalize(y_trimmed)
+        y_normalized, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
 
         # 2. Extract Features
         features = extract_full_features(y_normalized, sr, word_text)
@@ -74,6 +64,22 @@ class StressEvaluator:
         probs = self.softmax(scores)
 
         stress_index = int(np.argmax(probs))
+
+        feature_debug = []
+        feat_arr = features[0] # Bỏ batch dimension
+
+        for i in range(min(num_syl, len(feat_arr))):
+            # Lưu ý: features này ĐÃ qua chuẩn hóa (trừ mean chia std) nên số nó sẽ lạ lạ
+            # Nhưng ta vẫn so sánh tương đối được.
+            f = feat_arr[i]
+            feature_debug.append({
+                "syl": i,
+                "pitch_norm": float(f[1]),  # Index 1 là Pitch Mean
+                "energy_norm": float(f[8]), # Index 8 là RMS Mean (thường là vậy, check code dưới)
+                "score": float(scores[i])
+            })
+
+        print(feature_debug)
 
         return {
             "word": word_text,

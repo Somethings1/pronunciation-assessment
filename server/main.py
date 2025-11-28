@@ -1,10 +1,14 @@
 import uvicorn
 import os
+import io
+import librosa
 import numpy as np
 import re
+import soundfile as sf
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from g2p_en import G2p
+from server.utils.audio_processor import preprocess_audio
 
 # Import Services
 from server.services.stress_service import StressEvaluator
@@ -82,69 +86,94 @@ async def assess_pronunciation(
     try:
         # Đọc audio 1 lần
         audio_bytes = await audio.read()
+        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
+        y_normalized = preprocess_audio(y, sr=sr)
+        wav_buffer = io.BytesIO()
+        sf.write(wav_buffer, y_normalized, sr, format='WAV')
+        wav_buffer.seek(0)
+        clean_audio_bytes = wav_buffer.read()
 
-        # --- 1. CHẠY STRESS DETECTION ---
-        stress_result = stress_service.predict(audio_bytes, word)
+        # 2. CHẠY GOP TRƯỚC (Để lấy Phoneme Score & Alignment)
+        gop_result = gop_service.infer_gop(clean_audio_bytes, word)
+
+        if "error" in gop_result:
+            raise HTTPException(500, f"GOP Error: {gop_result['error']}")
+
+        # 3. SMART CROP (Cắt audio dựa trên tai của GOP Model)
+        # Mục đích: Cắt chính xác đoạn có giọng nói để thuật toán chia đều của Stress hoạt động tốt hơn
+
+        # Lấy mốc thời gian từ GOP (nếu có)
+        bounds = gop_result.get("speech_bounds")
+        # Hoặc tính từ alignment nếu GOP trả về
+        if not bounds and "alignment" in gop_result and gop_result["alignment"]:
+            ali = gop_result["alignment"]
+            # Lấy start của token đầu và end của token cuối, nới rộng ra 0.1s
+            start_t = max(0, ali[0]["start"] - 0.1)
+            end_t = min(len(y_normalized)/sr, ali[-1]["end"] + 0.1)
+            bounds = {"start": start_t, "end": end_t}
+        print(f"Bounds: {bounds}")
+
+        if bounds:
+            start_sample = int(bounds["start"] * sr)
+            end_sample = int(bounds["end"] * sr)
+            y_cropped = y_normalized[start_sample:end_sample]
+
+        else:
+            # Fallback nếu GOP không trả về bounds
+            print("GOP did not return a bound")
+            y_cropped = y_normalized
+
+        # Encode bản đã cắt (cropped) để gửi vào Stress Service
+        crop_buffer = io.BytesIO()
+        sf.write(crop_buffer, y_cropped, sr, format='WAV')
+        crop_buffer.seek(0)
+        cropped_audio_bytes = crop_buffer.read()
+
+        # 4. CHẠY STRESS DETECTION (Trên file audio đã được Smart Crop)
+        stress_result = stress_service.predict(cropped_audio_bytes, word)
 
         if "error" in stress_result:
             raise HTTPException(500, f"Stress Error: {stress_result['error']}")
 
-        # Lấy Ground Truth Stress (Chuẩn từ điển)
-        truth_stress = get_truth_stress(word)
+        # --- TỔNG HỢP KẾT QUẢ (Logic cũ giữ nguyên) ---
 
-        # Lấy Predicted Stress (Người dùng nói)
-        # stress_result['raw_scores'] là xác suất từng âm tiết (vd: [0.1, 0.9, 0.05])
-        # Ta convert sang binary [0, 1, 0] dựa trên argmax
+        # GOP Scores
+        phones_score = {}
+        for k, v in gop_result['details'].items():
+            phones_score[k] = v['gop_score']
+
+        # Overall Score
+        avg_gop = gop_result['average_gop']
+        overall_score = max(0, min(100, np.exp(avg_gop) * 100))
+
+        # Stress Processing
+        truth_stress = get_truth_stress(word)
         pred_probs = stress_result['raw_scores']
         pred_stress = [0] * len(pred_probs)
 
-        # Tìm đỉnh cao nhất -> Gán là 1 (Primary Stress)
-        # Lưu ý: Nếu từ điển có nhiều trọng âm (rare), logic này chỉ bắt Primary
         if pred_probs:
             max_idx = np.argmax(pred_probs)
             pred_stress[max_idx] = 1
 
-        # Xử lý trường hợp lệch độ dài (do thuật toán tách âm tiết khác nhau)
-        # Ưu tiên độ dài của Truth (từ điển)
+        # Fix length mismatch
         target_len = len(truth_stress)
         current_len = len(pred_stress)
-
         if current_len > target_len:
             pred_stress = pred_stress[:target_len]
         elif current_len < target_len:
             pred_stress = pred_stress + [0] * (target_len - current_len)
 
-        # --- 2. CHẠY GOP (PHONEME SCORE) ---
-        gop_result = gop_service.infer_gop(audio_bytes, word)
-
-        if "error" in gop_result:
-            raise HTTPException(500, f"GOP Error: {gop_result['error']}")
-
-        # Clean up GOP structure
-        # Chỉ lấy những info cần thiết cho FE
-        phones_score = {}
-        for k, v in gop_result['details'].items():
-            # k dạng "AH_1", v['gop_score'] là số âm
-            phones_score[k] = v['gop_score']
-
-        # Tính điểm tổng (Overall)
-        # Map GOP average (-5 đến 0) sang thang 0-100
-        avg_gop = gop_result['average_gop']
-        # Công thức heuristic: Score ~ exp(avg_gop) * 100
-        overall_score = max(0, min(100, np.exp(avg_gop) * 100))
-
-        # --- 3. TRẢ VỀ KẾT QUẢ ---
         return {
             "status": "success",
             "word": word,
-            "phones": phones_score, # { "AH_0": -0.5, "P_1": -1.2 }
+            "phones": phones_score,
             "stress": {
-                "truth": truth_stress, # [0, 1, 0]
-                "infer": pred_stress,  # [0, 1, 0]
-                "confidence": stress_result['stress_probability'], # 0.95
+                "truth": truth_stress,
+                "infer": pred_stress,
+                "confidence": stress_result['stress_probability'],
                 "syllable_count": target_len
             },
-            "overall_score": round(overall_score, 1) # 85.5
+            "overall_score": round(overall_score, 1)
         }
 
     except Exception as e:

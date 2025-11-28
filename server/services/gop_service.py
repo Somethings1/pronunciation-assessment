@@ -6,6 +6,8 @@ import io
 import logging
 import re
 from g2p_en import G2p
+import syllapy
+from server.utils.audio_processor import preprocess_audio
 
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
@@ -37,16 +39,7 @@ class GOPEvaluator:
         if not self.model:
             return {"error": "Model chưa load"}
 
-        # 1. Preprocess Audio
-        try:
-            y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
-            # Cắt khoảng lặng & Normalize
-            y_trimmed, _ = librosa.effects.trim(y, top_db=20)
-            if len(y_trimmed) < 1000:
-                y_trimmed = y
-            y_normalized = librosa.util.normalize(y_trimmed)
-        except Exception as e:
-            return {"error": f"Audio lỗi: {str(e)}"}
+        y_normalized, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
 
         # 2. Convert Text -> Phonemes
         raw_phonemes = self.g2p(transcript_text)
@@ -89,6 +82,34 @@ class GOPEvaluator:
         gop_scores = {}
         tokens = self.processor.tokenizer.convert_ids_to_tokens(valid_label_ids)
 
+        # --- [NEW] TÍNH TOÁN BIÊN GIỚI GIỌNG NÓI (VOICE BOUNDARIES) ---
+        # predicted_ids lấy từ: predicted_ids = torch.argmax(logits, dim=-1)
+        # Lưu ý: Đoạn này phải nằm sau khi có logits
+
+        # 1. Lấy chuỗi token raw (bao gồm cả blank)
+        predicted_ids = torch.argmax(logits, dim=-1)[0]
+        non_blank_indices = torch.nonzero(predicted_ids != self.blank_id, as_tuple=True)[0]
+
+        speech_start = 0.0
+        speech_end = 0.0
+
+        if len(non_blank_indices) > 0:
+            # Frame đầu tiên có chữ
+            first_frame = non_blank_indices[0].item()
+            # Frame cuối cùng có chữ
+            last_frame = non_blank_indices[-1].item()
+
+            # Convert sang giây (1 frame = 0.02s)
+            speech_start = max(0, first_frame * 0.02 - 0.1) # Lùi lại 0.1s lấy đà
+
+            # Tính duration tổng của audio input (để không cắt lố)
+            total_duration = len(y_normalized) / 16000
+            speech_end = min(total_duration, last_frame * 0.02 + 0.1) # Thêm 0.1s đuôi
+        else:
+            # Model điếc, không nghe thấy gì -> Giữ nguyên
+            speech_start = 0.0
+            speech_end = len(y_normalized) / 16000
+
         for i, pid in enumerate(valid_label_ids):
             ll_denom_cost = self.ctc_loss_denom(params, labels, i, self.blank_id)
 
@@ -111,11 +132,71 @@ class GOPEvaluator:
                 "confidence_score": round(conf, 2)
             }
 
+        # ======================================================================
+        # 🕵️ FULL PANORAMA AUDIT LOG (CÁI MÀY CẦN ĐÂY)
+        # ======================================================================
+        import syllapy
+        num_syllables = syllapy.count(transcript_text)
+        if num_syllables == 0: num_syllables = 1
+
+        # Raw tokens từ model (Full Audio)
+        raw_output_tokens = self.processor.tokenizer.convert_ids_to_tokens(predicted_ids.tolist())
+
+        # Tính toán điểm cắt trên trục Frame
+        crop_start_frame = int(speech_start / 0.02)
+        crop_end_frame = int(speech_end / 0.02)
+
+        # Đảm bảo bounds
+        crop_start_frame = max(0, min(crop_start_frame, len(raw_output_tokens)))
+        crop_end_frame = max(crop_start_frame, min(crop_end_frame, len(raw_output_tokens)))
+
+        # Vùng audio mà Stress model sẽ nhận được
+        stress_input_len = crop_end_frame - crop_start_frame
+        frames_per_syl = stress_input_len / num_syllables if stress_input_len > 0 else 0
+
+        print("\n" + "="*70)
+        print(f"🕵️ FULL ALIGNMENT AUDIT: '{transcript_text}' ({num_syllables} syls)")
+        print(f"   Audio Len: {len(raw_output_tokens)} frames | Crop: {crop_start_frame}-{crop_end_frame}")
+        print("-" * 70)
+
+        def format_tokens(toks):
+            return " ".join([t if t != self.processor.tokenizer.pad_token else '.' for t in toks])
+
+        # 1. Phần bị cắt bỏ ở đầu (IGNORED START)
+        pre_crop = raw_output_tokens[:crop_start_frame]
+        if pre_crop:
+            print(f"🗑️ [IGNORED START] : {format_tokens(pre_crop)}")
+
+        # 2. Phần Stress Model sẽ nhìn thấy (Chia Slot)
+        if stress_input_len > 0:
+            for i in range(num_syllables):
+                # Tính vị trí tương đối trong vùng crop
+                rel_s = int(i * frames_per_syl)
+                rel_e = int((i + 1) * frames_per_syl)
+
+                # Map sang tuyệt đối
+                abs_s = crop_start_frame + rel_s
+                abs_e = crop_start_frame + rel_e
+
+                slot_content = raw_output_tokens[abs_s:abs_e]
+                print(f"🎯 [STRESS SLOT {i+1}]: {format_tokens(slot_content)}")
+        else:
+            print("⚠️ [ERROR] Vùng Smart Crop rỗng!")
+
+        # 3. Phần bị cắt bỏ ở đuôi (IGNORED END)
+        post_crop = raw_output_tokens[crop_end_frame:]
+        if post_crop:
+            print(f"🗑️ [IGNORED END]   : {format_tokens(post_crop)}")
+
+        print("="*70 + "\n")
+        # ======================================================================
+
         return {
             "transcript_text": transcript_text,
             "transcript_phonemes": phoneme_string,
             "average_gop": np.mean([v['gop_score'] for v in gop_scores.values()]) if gop_scores else 0,
-            "details": gop_scores
+            "details": gop_scores,
+            "speech_bounds": {"start": speech_start, "end": speech_end}
         }
 
     def check_arbitrary(self, in_alphas, s, t, zero_pos=[]):
