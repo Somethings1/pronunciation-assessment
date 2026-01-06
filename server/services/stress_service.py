@@ -55,7 +55,6 @@ class StressEvaluator:
         if scores.ndim == 0:
             scores = np.array([scores])
 
-        # Fix lỗi length mismatch
         if len(scores) > num_syl:
             scores = scores[:num_syl]
         elif len(scores) < num_syl:
@@ -69,13 +68,11 @@ class StressEvaluator:
         feat_arr = features[0] # Bỏ batch dimension
 
         for i in range(min(num_syl, len(feat_arr))):
-            # Lưu ý: features này ĐÃ qua chuẩn hóa (trừ mean chia std) nên số nó sẽ lạ lạ
-            # Nhưng ta vẫn so sánh tương đối được.
             f = feat_arr[i]
             feature_debug.append({
                 "syl": i,
-                "pitch_norm": float(f[1]),  # Index 1 là Pitch Mean
-                "energy_norm": float(f[8]), # Index 8 là RMS Mean (thường là vậy, check code dưới)
+                "pitch_norm": float(f[1]),
+                "energy_norm": float(f[8]),
                 "score": float(scores[i])
             })
 

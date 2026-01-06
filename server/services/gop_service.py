@@ -82,9 +82,7 @@ class GOPEvaluator:
         gop_scores = {}
         tokens = self.processor.tokenizer.convert_ids_to_tokens(valid_label_ids)
 
-        # --- [NEW] TÍNH TOÁN BIÊN GIỚI GIỌNG NÓI (VOICE BOUNDARIES) ---
-        # predicted_ids lấy từ: predicted_ids = torch.argmax(logits, dim=-1)
-        # Lưu ý: Đoạn này phải nằm sau khi có logits
+        # --- TÍNH TOÁN BIÊN GIỚI GIỌNG NÓI (VOICE BOUNDARIES) ---
 
         # 1. Lấy chuỗi token raw (bao gồm cả blank)
         predicted_ids = torch.argmax(logits, dim=-1)[0]
@@ -94,19 +92,14 @@ class GOPEvaluator:
         speech_end = 0.0
 
         if len(non_blank_indices) > 0:
-            # Frame đầu tiên có chữ
             first_frame = non_blank_indices[0].item()
-            # Frame cuối cùng có chữ
             last_frame = non_blank_indices[-1].item()
 
-            # Convert sang giây (1 frame = 0.02s)
             speech_start = max(0, first_frame * 0.02 - 0.1) # Lùi lại 0.1s lấy đà
 
-            # Tính duration tổng của audio input (để không cắt lố)
             total_duration = len(y_normalized) / 16000
             speech_end = min(total_duration, last_frame * 0.02 + 0.1) # Thêm 0.1s đuôi
         else:
-            # Model điếc, không nghe thấy gì -> Giữ nguyên
             speech_start = 0.0
             speech_end = len(y_normalized) / 16000
 
@@ -133,24 +126,20 @@ class GOPEvaluator:
             }
 
         # ======================================================================
-        # 🕵️ FULL PANORAMA AUDIT LOG (CÁI MÀY CẦN ĐÂY)
+        # AUDIT LOG
         # ======================================================================
         import syllapy
         num_syllables = syllapy.count(transcript_text)
         if num_syllables == 0: num_syllables = 1
 
-        # Raw tokens từ model (Full Audio)
         raw_output_tokens = self.processor.tokenizer.convert_ids_to_tokens(predicted_ids.tolist())
 
-        # Tính toán điểm cắt trên trục Frame
         crop_start_frame = int(speech_start / 0.02)
         crop_end_frame = int(speech_end / 0.02)
 
-        # Đảm bảo bounds
         crop_start_frame = max(0, min(crop_start_frame, len(raw_output_tokens)))
         crop_end_frame = max(crop_start_frame, min(crop_end_frame, len(raw_output_tokens)))
 
-        # Vùng audio mà Stress model sẽ nhận được
         stress_input_len = crop_end_frame - crop_start_frame
         frames_per_syl = stress_input_len / num_syllables if stress_input_len > 0 else 0
 
