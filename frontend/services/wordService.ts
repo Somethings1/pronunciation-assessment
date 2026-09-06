@@ -7,10 +7,14 @@ export const WORD_DATABASE: WordData[] = [
   { id: '1', word: 'Apple', band: DifficultyBand.A1, ipa: '/ˈæp.əl/', phonemes: 'AE1 P AH0 L', syllables: ['Ap', 'ple'], stressPattern: '10' },
   { id: '2', word: 'Hello', band: DifficultyBand.A1, ipa: '/həˈloʊ/', phonemes: 'HH AH0 L OW1', syllables: ['Hel', 'lo'], stressPattern: '01' },
   { id: '3', word: 'Water', band: DifficultyBand.A1, ipa: '/ˈwɔː.tər/', phonemes: 'W AO1 T ER0', syllables: ['Wa', 'ter'], stressPattern: '10' },
+  { id: '14', word: 'Banana', band: DifficultyBand.A1, ipa: '/bəˈnæn.ə/', phonemes: 'B AH0 N AE1 N AH0', syllables: ['Ba', 'na', 'na'], stressPattern: '010' },
+  { id: '15', word: 'Elephant', band: DifficultyBand.A1, ipa: '/ˈel.ə.fənt/', phonemes: 'EH1 L AH0 F AH0 N T', syllables: ['El', 'e', 'phant'], stressPattern: '100' },
   
   // A2
   { id: '4', word: 'Decide', band: DifficultyBand.A2, ipa: '/dɪˈsaɪd/', phonemes: 'D IH2 S AY1 D', syllables: ['De', 'cide'], stressPattern: '01' },
   { id: '5', word: 'Garden', band: DifficultyBand.A2, ipa: '/ˈɡɑːr.dən/', phonemes: 'G AA1 R D AH0 N', syllables: ['Gar', 'den'], stressPattern: '10' },
+  { id: '16', word: 'Record', band: DifficultyBand.A2, ipa: '/ˈrek.ɔːrd/', phonemes: 'R EH1 K ER0 D', syllables: ['Re', 'cord'], stressPattern: '10' },
+  { id: '17', word: 'Computer', band: DifficultyBand.A2, ipa: '/kəmˈpjuː.tər/', phonemes: 'K AH0 M P Y UW1 T ER0', syllables: ['Com', 'pu', 'ter'], stressPattern: '010' },
   
   // B1
   { id: '6', word: 'Delicious', band: DifficultyBand.B1, ipa: '/dɪˈlɪʃ.əs/', phonemes: 'D IH0 L IH1 SH AH0 S', syllables: ['De', 'li', 'cious'], stressPattern: '010' },
