@@ -236,18 +236,21 @@ class GOPEvaluator:
         conf = 100.0 / (1.0 + np.exp(-z))
         return float(np.clip(conf, 0.0, 100.0))
 
-    def infer_gop(self, audio_bytes, transcript_text, target_phonemes=None, method="forced_align"):
+    def infer_gop(self, audio_bytes, transcript_text, target_phonemes=None, method="soft_peaks"):
         """
         Main GOP evaluation entry point.
-        By default, runs Forced-Alignment GOP (Hu et al. 2015, Witt & Young 2000, Cao et al. 2024).
-        If method == 'alignment_free', delegates to alignment-free CTC loss (SDI) benchmark.
-        Optionally accepts target_phonemes directly (e.g. ['B', 'AH', 'N', 'AE', 'N', 'AH']).
+        - 'soft_peaks' (default): Alignment-free Soft Posterior Alignment & Inter-Peak Valley Splitting.
+        - 'forced_align': Viterbi trellis dynamic programming forced alignment (Hu et al. 2015, Cao et al. 2024).
+        - 'alignment_free': Full-sequence denominator CTC loss (SDI) benchmark.
         """
         if not self.model:
             return {"error": "Model not loaded"}
 
         if method == "alignment_free":
             return self.infer_gop_alignment_free(audio_bytes, transcript_text, target_phonemes=target_phonemes)
+
+        if method == "soft_peaks":
+            return self.infer_gop_soft_peaks(audio_bytes, transcript_text, target_phonemes=target_phonemes)
 
         # 1. Load and prepare audio
         try:
@@ -453,6 +456,224 @@ class GOPEvaluator:
             time_str = f"{seg['start_time']:.2f}s - {seg['end_time']:.2f}s"
             frames_str = f"{seg['emission_frames']}"
             print(f"   {seg['phoneme']:<8} | {time_str:<18} | {frames_str:<12}")
+        print("=" * 70 + "\n")
+
+    # =========================================================================
+    # SOFT ALIGNMENT & CTC PEAK SPLITTING GOP - ALIGNMENT-FREE METHOD
+    # =========================================================================
+
+    def infer_gop_soft_peaks(self, audio_bytes, transcript_text, target_phonemes=None):
+        """
+        Evaluates Goodness of Pronunciation (GOP) using Soft Posterior Alignment
+        and Inter-Peak Valley Splitting directly on Wav2Vec2 CTC emissions.
+
+        Eliminates external alignment tools (MFA/Kaldi) and Viterbi state-trellis
+        expansion completely, operating in a single forward pass O(T):
+        1. Monotonic Peak Search: Finds sequence of emission peaks t_0 <= t_1 <= ... <= t_{U-1}.
+        2. Inter-Peak Valley Splitting: Identifies boundary frames at blank/silence maxima between peaks.
+        3. Soft Posterior Expectation: Computes Soft-LPP and Soft-LPR weighted by continuous
+           posterior gamma(t) = P(p_u | x_t) / sum P(p_u | x_tau).
+        4. Calibrated Confidence: Maps Soft-LPP via calibrated logistic scaling to 0-100%.
+        """
+        try:
+            y, sr = self._load_audio(audio_bytes)
+        except Exception as e:
+            return {"error": f"Audio loading error: {str(e)}"}
+
+        total_duration = len(y) / 16000.0
+
+        # 1. Resolve Target Phonemes
+        if target_phonemes is not None:
+            valid_phonemes = []
+            valid_label_ids = []
+            for p in target_phonemes:
+                p_clean = re.sub(r"\d+", "", p).strip().upper()
+                tid = self.token_to_id.get(p_clean)
+                if tid is not None:
+                    valid_phonemes.append(p_clean)
+                    valid_label_ids.append(tid)
+        else:
+            valid_phonemes, valid_label_ids = self.text_to_phonemes(transcript_text)
+
+        if not valid_label_ids:
+            return {"error": "No valid phonemes found in model dictionary."}
+
+        phoneme_string = " ".join(valid_phonemes)
+        U = len(valid_label_ids)
+
+        # 2. Single Model Forward Pass
+        with torch.no_grad():
+            inputs = self.processor(y, sampling_rate=16000, return_tensors="pt")
+            input_values = inputs.input_values.to(self.device)
+            logits = self.model(input_values).logits[0]  # (T, V)
+            log_probs_t = torch.nn.functional.log_softmax(logits, dim=-1)
+            probs_t = torch.softmax(logits, dim=-1)
+
+        log_probs = log_probs_t.cpu().numpy()
+        probs = probs_t.cpu().numpy()
+        T, V = probs.shape
+
+        # 3. Monotonic Peak Tracking (O(U * T) in numpy)
+        # Find peak sequence t_0 <= t_1 <= ... <= t_{U-1} maximizing sum of log posteriors
+        dp = np.full((U, T), -1e9, dtype=np.float64)
+        parent = np.zeros((U, T), dtype=np.int32)
+
+        for t in range(T):
+            dp[0, t] = log_probs[t, valid_label_ids[0]]
+
+        for u in range(1, U):
+            tid = valid_label_ids[u]
+            prev_row = dp[u - 1, :]
+            for t in range(u, T):
+                best_prev = int(np.argmax(prev_row[:t]))
+                dp[u, t] = prev_row[best_prev] + log_probs[t, tid]
+                parent[u, t] = best_prev
+
+        peaks = [0] * U
+        peaks[-1] = int(np.argmax(dp[-1, :]))
+        for u in range(U - 2, -1, -1):
+            peaks[u] = int(parent[u + 1, peaks[u + 1]])
+
+        # 4. Inter-Peak Valley Splitting
+        # Between peak t_u and t_{u+1}, split at the valley frame (maximum blank or lowest energy)
+        boundaries = [0]
+        for u in range(U - 1):
+            t1, t2 = peaks[u], peaks[u + 1]
+            if t1 == t2:
+                val_t = t1
+            else:
+                blank_probs = probs[t1:t2 + 1, self.blank_id]
+                val_t = t1 + int(np.argmax(blank_probs))
+            boundaries.append(val_t)
+        boundaries.append(T)
+
+        # 5. Speech Bounds (from first peak minus margin to last peak plus margin)
+        margin_frames = max(1, int(0.08 / self.frame_duration))
+        speech_start = max(0.0, (peaks[0] - margin_frames) * self.frame_duration)
+        speech_end = min(total_duration, (peaks[-1] + margin_frames) * self.frame_duration)
+        speech_bounds = {
+            "start": round(float(speech_start), 3),
+            "end": round(float(speech_end), 3)
+        }
+
+        # 6. Soft Posterior Expectation (Soft-LPP and Soft-LPR)
+        details = {}
+        alignment_list = []
+        gop_scores_list = []
+        conf_scores_list = []
+        unit_segments = []
+
+        for u in range(U):
+            s_frame = boundaries[u]
+            e_frame = max(s_frame + 1, boundaries[u + 1])
+            tid = valid_label_ids[u]
+            p_name = valid_phonemes[u]
+            peak_frame = peaks[u]
+
+            # Soft posterior attention weights within interval
+            interval_probs = probs[s_frame:e_frame, tid]
+            sum_p = np.sum(interval_probs)
+            if sum_p > 1e-6:
+                gamma = interval_probs / sum_p
+            else:
+                gamma = np.ones(e_frame - s_frame) / (e_frame - s_frame)
+
+            interval_logp = log_probs[s_frame:e_frame, tid]
+            soft_lpp = float(np.sum(gamma * interval_logp))
+
+            # Competitor phone log probabilities
+            lpr_diffs = []
+            for idx_sub, t in enumerate(range(s_frame, e_frame)):
+                mask = np.ones(V, dtype=bool)
+                mask[tid] = False
+                for sp in self.special_ids:
+                    if sp < V:
+                        mask[sp] = False
+                comp_logp = np.max(log_probs[t, mask])
+                lpr_diffs.append(interval_logp[idx_sub] - comp_logp)
+
+            soft_lpr = float(np.sum(gamma * np.array(lpr_diffs)))
+            conf_score = self._logistic_calibration(soft_lpp)
+            gop_score = soft_lpp
+
+            s_time = round(float(s_frame * self.frame_duration), 3)
+            e_time = round(float(e_frame * self.frame_duration), 3)
+            dur = round(float(e_time - s_time), 3)
+
+            seg_info = {
+                "unit_idx": u,
+                "phoneme": p_name,
+                "label_id": tid,
+                "peak_frame": peak_frame,
+                "peak_time": round(float(peak_frame * self.frame_duration), 3),
+                "emission_frames": [peak_frame],
+                "start_frame": int(s_frame),
+                "end_frame": int(e_frame),
+                "start_time": s_time,
+                "end_time": e_time,
+                "duration": dur
+            }
+            unit_segments.append(seg_info)
+
+            key = f"{p_name}_{u}"
+            details[key] = {
+                "phoneme": p_name,
+                "gop_score": round(gop_score, 4),
+                "confidence_score": round(conf_score, 2),
+                "lpp": round(soft_lpp, 4),
+                "lpr": round(soft_lpr, 4),
+                "start_time": s_time,
+                "end_time": e_time,
+                "duration": dur,
+                "peak_time": round(float(peak_frame * self.frame_duration), 3),
+                "frame_interval": [int(s_frame), int(e_frame)]
+            }
+
+            alignment_list.append({
+                "phoneme": p_name,
+                "start": s_time,
+                "end": e_time,
+                "peak_time": round(float(peak_frame * self.frame_duration), 3),
+                "gop_score": round(gop_score, 4),
+                "confidence_score": round(conf_score, 2)
+            })
+
+            gop_scores_list.append(gop_score)
+            conf_scores_list.append(conf_score)
+
+        overall_score = float(np.mean(conf_scores_list)) if conf_scores_list else 0.0
+        average_gop = float(np.mean(gop_scores_list)) if gop_scores_list else 0.0
+
+        self._audit_log_soft(transcript_text, unit_segments, speech_bounds)
+
+        return {
+            "transcript_text": transcript_text,
+            "transcript_phonemes": phoneme_string,
+            "overall_score": round(overall_score, 1),
+            "average_gop": round(average_gop, 4),
+            "details": details,
+            "alignment": alignment_list,
+            "speech_bounds": speech_bounds,
+            "method": "soft_peaks"
+        }
+
+    def _audit_log_soft(self, transcript_text, unit_segments, speech_bounds):
+        """Prints soft-peaks alignment audit summary for developer visibility."""
+        num_syllables = syllapy.count(transcript_text)
+        if num_syllables == 0:
+            num_syllables = 1
+
+        print("\n" + "=" * 70)
+        print(f"✨ SOFT ALIGNMENT & CTC PEAK SPLITTING: '{transcript_text}' ({num_syllables} syls)")
+        print(f"   Speech bounds: {speech_bounds['start']:.3f}s -> {speech_bounds['end']:.3f}s")
+        print(f"   Phoneme breakdown ({len(unit_segments)} units):")
+        print(f"   {'PHONE':<8} | {'TIME INTERVAL':<18} | {'PEAK TIME':<10} | {'FRAMES':<10}")
+        print("   " + "-" * 55)
+        for seg in unit_segments:
+            time_str = f"{seg['start_time']:.2f}s - {seg['end_time']:.2f}s"
+            peak_str = f"{seg['peak_time']:.2f}s"
+            frames_str = f"[{seg['start_frame']}, {seg['end_frame']})"
+            print(f"   {seg['phoneme']:<8} | {time_str:<18} | {peak_str:<10} | {frames_str:<10}")
         print("=" * 70 + "\n")
 
     # =========================================================================
