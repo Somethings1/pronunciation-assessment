@@ -314,23 +314,6 @@ curl -X POST http://127.0.0.1:8000/assess \
 
 ---
 
-## 📜 Academic Paper & Citation
-
-If you use this work or its methodology in your research, please cite our paper:
-
-```bibtex
-@inproceedings{lingostress2025singlepass,
-  title     = {Single-Pass Pronunciation Assessment: Eliminating Alignment via CTC Peak Splitting and Soft Posterior Expectation},
-  author    = {LingoStress Research Team},
-  booktitle = {Proceedings of INTERSPEECH},
-  year      = {2025},
-  pages     = {1--5},
-  url       = {https://github.com/your-repo/pronunciation-assessment}
-}
-```
-*The full LaTeX manuscript and bibliography can be found in the [`paper/`](paper/) directory.*
-
----
-
 ## 📄 License
 This project is licensed under the [MIT License](LICENSE).
+
