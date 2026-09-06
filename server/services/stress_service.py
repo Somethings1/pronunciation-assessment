@@ -64,15 +64,16 @@ class StressEvaluator:
         e_x = np.exp(x - np.max(x))
         return e_x / np.sum(e_x)
 
-    def predict(self, audio_input, word_text: str, alignments: list or None = None, method: str = "aligned") -> dict:
+    def predict(self, audio_input, word_text: str, alignments: list or None = None, method: str = "soft_peaks") -> dict:
         """
         Evaluates syllable stress for a word in an audio segment.
 
         Args:
             audio_input: bytes (WAV audio bytes) or np.ndarray (audio waveform)
             word_text: Word string (e.g. 'banana', 'record')
-            alignments: Optional forced alignment data (phoneme-level or syllable-level)
-            method: 'aligned' (default, uses true MOP boundaries) or 'uniform' (baseline comparison)
+            alignments: Optional alignment data (soft-peaks CTC or forced alignment)
+            method: 'soft_peaks' (default, alignment-free peak splitting),
+                    'aligned' (uses true MOP boundaries), or 'uniform' (baseline comparison)
 
         Returns:
             dict containing:
@@ -84,6 +85,7 @@ class StressEvaluator:
                 - 'confidence': float
                 - 'raw_scores': list[float]
                 - 'syllables': list[dict] (per-syllable acoustic prominence debug info)
+                - 'method': str
         """
         # 1. Load Audio
         if isinstance(audio_input, (bytes, io.BytesIO)):
@@ -180,5 +182,6 @@ class StressEvaluator:
             "stress_probability": round(confidence, 4),
             "raw_scores": [round(float(p), 4) for p in probs],
             "syllables": debug_data,
-            "feature_debug": debug_data
+            "feature_debug": debug_data,
+            "method": method
         }

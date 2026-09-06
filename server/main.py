@@ -83,12 +83,13 @@ async def health_check():
 @app.post("/assess")
 async def assess_pronunciation(
     word: str = Form(..., description="Từ cần chấm điểm (vd: 'banana')"),
-    audio: UploadFile = File(...)
+    audio: UploadFile = File(...),
+    method: str = Form("soft_peaks", description="Phương pháp: 'soft_peaks' (default), 'forced_align', hoặc 'alignment_free'")
 ):
     """
     Endpoint All-in-One:
-    - Input: Audio + Word
-    - Output: Forced-Aligned GOP Scores (Phoneme) + Forced-Aligned Stress Detection (Syllable)
+    - Input: Audio + Word (+ optional method: 'soft_peaks', 'forced_align', 'alignment_free')
+    - Output: Goodness of Pronunciation (Phoneme) + Syllable Stress Detection
     """
     if not stress_service or not gop_service:
         raise HTTPException(503, "Services chưa sẵn sàng. Check log server.")
@@ -103,18 +104,18 @@ async def assess_pronunciation(
         wav_buffer.seek(0)
         clean_audio_bytes = wav_buffer.read()
 
-        # 2. CHẠY GOP VỚI FORCED ALIGNMENT
-        gop_result = gop_service.infer_gop(clean_audio_bytes, word)
+        # 2. CHẠY GOP (Soft Alignment & CTC Peak Splitting hoặc Forced Alignment)
+        gop_result = gop_service.infer_gop(clean_audio_bytes, word, method=method)
 
         if "error" in gop_result:
             raise HTTPException(500, f"GOP Error: {gop_result['error']}")
 
-        # 3. CHẠY STRESS DETECTION VỚI BIÊN GIỚI FORCED ALIGNMENT
-        # Truyền trực tiếp alignment từ GOP để Stress xác định đúng ranh giới âm tiết và nguyên âm
+        # 3. CHẠY STRESS DETECTION VỚI BIÊN GIỚI TỪ GOP
         stress_result = stress_service.predict(
             clean_audio_bytes,
             word,
-            alignments=gop_result.get("alignment")
+            alignments=gop_result.get("alignment"),
+            method=method
         )
 
         if "error" in stress_result:
@@ -149,6 +150,7 @@ async def assess_pronunciation(
         return {
             "status": "success",
             "word": word,
+            "method": method,
             "phones": phones_score,
             "stress": {
                 "truth": truth_stress,

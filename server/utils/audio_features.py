@@ -273,22 +273,26 @@ def resolve_syllable_alignments(syllables: list, alignments: list or None, total
                 if nuc_match:
                     n_start = nuc_match["start"]
                     n_end = nuc_match["end"]
+                    n_peak = nuc_match.get("peak_time", None)
                 else:
                     n_start = s_start + (s_end - s_start) * 0.2
                     n_end = s_start + (s_end - s_start) * 0.8
+                    n_peak = None
             else:
                 # Fallback proportion
                 s_start = (i / num_syls) * total_duration
                 s_end = ((i + 1) / num_syls) * total_duration
                 n_start = s_start + (s_end - s_start) * 0.2
                 n_end = s_start + (s_end - s_start) * 0.8
+                n_peak = None
 
             resolved.append({
                 **s,
                 "start": max(0.0, float(s_start)),
                 "end": min(total_duration, float(s_end)),
                 "nucleus_start": max(0.0, float(n_start)),
-                "nucleus_end": min(total_duration, float(n_end))
+                "nucleus_end": min(total_duration, float(n_end)),
+                "nucleus_peak_time": n_peak
             })
         return resolved
 
@@ -616,6 +620,7 @@ def extract_full_features(y: np.ndarray, sr: int, word: str, alignments: list or
             "coda": s['coda'],
             "boundaries": {"start": float(round(s_start, 4)), "end": float(round(s_end, 4))},
             "nucleus_boundaries": {"start": float(round(n_start, 4)), "end": float(round(n_end, 4))},
+            "nucleus_peak_time": s.get("nucleus_peak_time"),
             "acoustic_features": ac_result["debug"],
             "is_stressed_truth": s['is_primary_stress'],
             "stress_marker": s['stress_marker']
