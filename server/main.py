@@ -143,8 +143,11 @@ async def assess_pronunciation(
             phones_score[k] = v['gop_score']
 
         # Overall Score
-        avg_gop = gop_result['average_gop']
-        overall_score = max(0, min(100, np.exp(avg_gop) * 100))
+        if "overall_score" in gop_result and gop_result["overall_score"] is not None:
+            overall_score = gop_result["overall_score"]
+        else:
+            avg_gop = gop_result.get('average_gop', 0)
+            overall_score = max(0, min(100, np.exp(avg_gop) * 100))
 
         # Stress Processing
         truth_stress = get_truth_stress(word)

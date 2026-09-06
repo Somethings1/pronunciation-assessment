@@ -8,7 +8,8 @@ import io
 from server.services.gop_service import GOPEvaluator
 
 # --- CẤU HÌNH ---
-MODEL_PATH = os.path.join("models", "ctcgop")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "models", "ctcgop")
 DURATION = 3.0
 SAMPLE_RATE = 16000
 
@@ -51,13 +52,8 @@ def numpy_to_wav_bytes(audio_data):
 
 
 def main():
-    # Kiểm tra đường dẫn
-    if not os.path.exists(MODEL_PATH):
-        print(f"❌ Không tìm thấy folder model tại: {MODEL_PATH}")
-        print("👉 Nhớ copy folder checkpoint-8000 vào folder 'models' nhé!")
-        return
-
-    evaluator = GOPEvaluator(MODEL_PATH)
+    # Khởi tạo GOPEvaluator (tự động fallback nếu checkpoint local thiếu weights)
+    evaluator = GOPEvaluator(MODEL_PATH if os.path.exists(MODEL_PATH) else None)
 
     print("\n" + "="*60)
     print("   TEST GOP - PHONEME LEVEL (GOP-CTC-AF-SDI)")
