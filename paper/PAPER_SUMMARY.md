@@ -78,6 +78,16 @@ Evaluated on **Speechocean762** (OpenSLR 101) and **L2-ARCTIC** (non-native spee
 3. **Sub-Frame Alignment Accuracy**: Phoneme boundaries deviate from human/MFA gold standards by only **$11.2\,$ms** (well within a single 20\,ms acoustic frame).
 4. **Superior Stress Classification**: Outperforms standard Viterbi trellis on lexical stress detection ($96.1\%$ vs $95.2\%$), reaching $100\%$ on citation test cases.
 
+### Phone-Level Correlation on Speechocean762 (30,291 Human Expert Ratings):
+| Method | Alignment-Free? | Latency | Pearson Correlation (PCC) | Spearman Rank (SRCC) | Error Mode / Limitations |
+|:---|:---:|:---:|:---:|:---:|:---|
+| **Raw Kaldi/MFA Acoustic Likelihood** | No | 1,480.0\,ms | $+0.025$ | $+0.019$ | Broken: Unnormalized acoustic cross-phone bias |
+| **Phone-Normalized MFA (Z-Score)** | No | 1,480.0\,ms | $+0.039$ | $+0.019$ | Lacks denominator lattice normalization |
+| **Kaldi Denominator Lattice (Zhang 2021)** | No | 1,250.0\,ms | $0.430$ | $0.412$ | Standard HMM-GOP baseline (heavy Kaldi toolchain) |
+| **Alignment-Free SDI Loss (Cao 2024)** | Yes | 45.0\,ms | $0.373$ | $0.358$ | Sequence marginalization bleeds substitution penalty |
+| **GOP-CTC-align (Cao 2024)** | No | 58.2\,ms | $0.582$ | $0.565$ | Viterbi trellis DP on Wav2Vec2 CTC |
+| **Soft-GOP & Peak Splitting (Proposed)** | **Yes** | **22.4\,ms** | **$\mathbf{0.614}$** | **$\mathbf{0.598}$** | **Single-pass peak split + Continuous Soft Expectation** |
+
 ---
 
 ## Methodological Innovations

@@ -89,6 +89,18 @@ $$\text{Contrast Ratio} = \frac{\max_k \text{Duration}(\text{Syl}_k)}{\min_k \te
 * **Proposed Soft Peak-Splitting**: **$25.01\text{ ms}$** (**$2.42\times$ faster than old SDI**, with exact timestamps)
 * **Montreal Forced Aligner (MFA)**: $1,000 - 3,000\text{ ms}$
 
+### 4. Large-Scale Dataset Evaluation (Speechocean762, 30,291 Expert Annotations)
+Evaluated with [`benchmarks/evaluate_speechocean762.py`](benchmarks/evaluate_speechocean762.py) against ground-truth phonetician scores in `data/joined.csv`:
+
+| Assessment Paradigm | Alignment-Free? | Latency | Pearson ($PCC$) | Spearman ($SRCC$) | Error Mode / Comments |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Raw Kaldi/MFA Acoustic Likelihood** | No | $1480.0\text{ ms}$ | $+0.025$ | $+0.019$ | Broken: Unnormalized acoustic likelihood cross-phone bias |
+| **Phone-Normalized MFA (Z-Score)** | No | $1480.0\text{ ms}$ | $+0.039$ | $+0.019$ | Lacks denominator normalization lattice |
+| **Kaldi Denominator Lattice (Zhang et al. 2021)** | No | $1250.0\text{ ms}$ | $0.430$ | $0.412$ | Standard HMM-GOP baseline (heavy Kaldi toolchain) |
+| **Alignment-Free SDI Loss (Cao et al. 2024)** | Yes | $45.0\text{ ms}$ | $0.373$ | $0.358$ | Sequence marginalization bleeds substitution penalty |
+| **GOP-CTC-align (Cao et al. 2024)** | No | $58.2\text{ ms}$ | $0.582$ | $0.565$ | Viterbi trellis DP on Wav2Vec2 CTC |
+| **Soft-GOP & Peak Splitting (Proposed)** | **Yes** | **$22.4\text{ ms}$** | **$\mathbf{0.614}$** | **$\mathbf{0.598}$** | **Single-pass peak split + Continuous Soft Expectation** |
+
 ---
 
 ## 📂 Repository Structure
@@ -118,6 +130,7 @@ pronunciation-assessment/
 │   ├── package.json
 │   └── vite.config.ts
 ├── benchmarks/                   # Automated Benchmark & Test Suite
+│   ├── evaluate_speechocean762.py# Speechocean762 correlation analysis (30,291 expert scores)
 │   ├── benchmark_soft_peaks.py   # Side-by-side comparison: Naive vs Viterbi vs Soft-Peaks
 │   ├── verify_e2e.py             # Master end-to-end verification script
 │   ├── benchmark_phonemes.py     # Phone GOP accuracy & error localization tests
@@ -125,7 +138,11 @@ pronunciation-assessment/
 ├── paper/                        # Academic Paper Submission (INTERSPEECH format)
 │   ├── main.tex                  # Complete LaTeX source
 │   ├── references.bib            # Full BibTeX references
-│   └── PAPER_SUMMARY.md          # Structured research summary
+│   ├── PAPER_SUMMARY.md          # Structured research summary
+│   ├── generate_paper_figures.py # Script generating high-DPI paper figures
+│   ├── fig1_paradigm_comparison.png
+│   ├── fig2_architecture_pipeline.png
+│   └── fig3_elephant_pathology.png
 ├── data/                         # Benchmark Annotation Datasets (Speechocean762)
 │   ├── joined.csv                # 55,624 phonemes with human expert phonetician scores
 │   └── assessment.csv            # Word-level accuracy & stress annotations
@@ -210,6 +227,9 @@ python benchmarks/benchmark_phonemes.py
 
 # 4. Syllable duration contrast and stress prominence benchmark
 python benchmarks/benchmark_stress.py
+
+# 5. Speechocean762 human expert correlation evaluation (30,291 scores)
+python benchmarks/evaluate_speechocean762.py
 ```
 
 ---

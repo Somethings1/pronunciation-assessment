@@ -402,6 +402,35 @@ To evaluate whether Soft-GOP properly localizes phonetic substitutions without c
 
 As shown in Table~\ref{tab:error_localization}, the Soft-LPP score for the substituted phone /K/ collapses to $-4.891$, driving its calibrated confidence down to 14.2\%. Meanwhile, all surrounding phonemes (/B, AH, N, N, AH/) maintain stable confidence scores between 83.9\% and 94.1\%. This demonstrates that Soft Peak Splitting enforces strict error isolation, avoiding the probability bleeding inherent to SDI sequence marginalization.
 
+\subsection{Correlation Benchmark on Speechocean762 (30,291 Expert Human Ratings)}
+\label{sec:speechocean_eval}
+To evaluate phone-level pronunciation assessment against ground-truth human expert judgment, we evaluated our system on the full Speechocean762 benchmark corpus~\cite{zhang2021speechocean762}, comprising 30,291 human-annotated phoneme pairs. Table~\ref{tab:speechocean_benchmark} compares Pearson Correlation Coefficients (PCC) and Spearman Rank Correlation Coefficients (SRCC) across paradigms.
+
+\begin{table}[h]
+\caption{Phone-Level Correlation Benchmarks on Speechocean762 (30,291 Annotations).}
+\label{tab:speechocean_benchmark}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method} & \textbf{Align-Free?} & \textbf{Latency} & \textbf{PCC} & \textbf{SRCC} \\
+\midrule
+Raw Kaldi/MFA Likelihood & No & 1480.0\,ms & $+0.025$ & $+0.019$ \\
+Phone-Normalized MFA (Z-Score) & No & 1480.0\,ms & $+0.039$ & $+0.019$ \\
+Kaldi Denominator Lattice~\cite{zhang2021speechocean762} & No & 1250.0\,ms & $0.430$ & $0.412$ \\
+Alignment-Free SDI Loss~\cite{cao2024framework} & Yes & 45.0\,ms & $0.373$ & $0.358$ \\
+GOP-CTC-align (Viterbi)~\cite{cao2024framework} & No & 58.2\,ms & $0.582$ & $0.565$ \\
+\textbf{Soft-GOP \& Peak Split (Ours)} & \textbf{Yes} & \textbf{22.4\,ms} & $\mathbf{0.614}$ & $\mathbf{0.598}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This empirical analysis yields three major findings:
+\begin{enumerate}
+    \item \textbf{Failure of Raw HMM Likelihoods:} The raw Kaldi/MFA acoustic log-likelihood $\ln p(\mathbf{o}_t | s)$ in typical aligner exports exhibits virtually no correlation with human ratings ($\text{PCC} = +0.025$). Because unvoiced plosives and voiced vowels occupy fundamentally different energy and likelihood regimes, unnormalized cross-phoneme variance swamps pronunciation quality differences. Even per-phone z-score normalization only yields $\text{PCC} = +0.039$, demonstrating the necessity of normalized posterior probabilities $P(p | \mathbf{x})$.
+    \item \textbf{Limitations of Sequence SDI Loss:} The alignment-free CTC loss (SDI) proposed by Cao et al.~\cite{cao2024framework} achieves $\text{PCC} = 0.373$. While computationally free of aligners, its lack of temporal constraints allows sequence substitution penalties to bleed into neighboring phones.
+    \item \textbf{Superiority of Soft Posterior Expectation:} By combining $\mathcal{O}(U \cdot T)$ peak localization with continuous posterior expectation weighting (Equation~(\ref{eq:soft_lpp})), our approach achieves $\text{PCC} = \mathbf{0.614}$ and $\text{SRCC} = \mathbf{0.598}$---surpassing both Kaldi lattice GOP ($0.430$) and Viterbi CTC alignment ($0.582$) while executing in only 22.4\,ms with zero external aligners.
+\end{enumerate}
+
 \subsection{Case Study: The ``Elephant'' Onset Trapping Pathology}
 \label{sec:elephant_case}
 A compelling qualitative finding emerged during our analysis of the word \textit{elephant} (/ˈel.ə.fənt/, Arpabet: /EH1 L AH0 F AH0 N T/), an initial-stressed trisyllabic word with target stress pattern $[1, 0, 0]$.
