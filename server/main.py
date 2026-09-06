@@ -70,6 +70,16 @@ def get_truth_stress(word):
     return stress_seq
 
 
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "gop_service": gop_service is not None and gop_service.model is not None,
+        "stress_service": stress_service is not None,
+        "stress_model_loaded": stress_service.model is not None if stress_service else False
+    }
+
+
 @app.post("/assess")
 async def assess_pronunciation(
     word: str = Form(..., description="Từ cần chấm điểm (vd: 'banana')"),
@@ -78,13 +88,13 @@ async def assess_pronunciation(
     """
     Endpoint All-in-One:
     - Input: Audio + Word
-    - Output: GOP Scores (Phoneme) + Stress Detection (Syllable)
+    - Output: Forced-Aligned GOP Scores (Phoneme) + Forced-Aligned Stress Detection (Syllable)
     """
     if not stress_service or not gop_service:
         raise HTTPException(503, "Services chưa sẵn sàng. Check log server.")
 
     try:
-        # Đọc audio 1 lần
+        # 1. Đọc và chuẩn hóa audio
         audio_bytes = await audio.read()
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
         y_normalized = preprocess_audio(y, sr=sr)
@@ -93,78 +103,48 @@ async def assess_pronunciation(
         wav_buffer.seek(0)
         clean_audio_bytes = wav_buffer.read()
 
-        # 2. CHẠY GOP TRƯỚC (Để lấy Phoneme Score & Alignment)
+        # 2. CHẠY GOP VỚI FORCED ALIGNMENT
         gop_result = gop_service.infer_gop(clean_audio_bytes, word)
 
         if "error" in gop_result:
             raise HTTPException(500, f"GOP Error: {gop_result['error']}")
 
-        # 3. SMART CROP (Cắt audio dựa trên tai của GOP Model)
-        # Mục đích: Cắt chính xác đoạn có giọng nói để thuật toán chia đều của Stress hoạt động tốt hơn
-
-        # Lấy mốc thời gian từ GOP (nếu có)
-        bounds = gop_result.get("speech_bounds")
-        # Hoặc tính từ alignment nếu GOP trả về
-        if not bounds and "alignment" in gop_result and gop_result["alignment"]:
-            ali = gop_result["alignment"]
-            # Lấy start của token đầu và end của token cuối, nới rộng ra 0.1s
-            start_t = max(0, ali[0]["start"] - 0.1)
-            end_t = min(len(y_normalized)/sr, ali[-1]["end"] + 0.1)
-            bounds = {"start": start_t, "end": end_t}
-        print(f"Bounds: {bounds}")
-
-        if bounds:
-            start_sample = int(bounds["start"] * sr)
-            end_sample = int(bounds["end"] * sr)
-            y_cropped = y_normalized[start_sample:end_sample]
-
-        else:
-            # Fallback nếu GOP không trả về bounds
-            print("GOP did not return a bound")
-            y_cropped = y_normalized
-
-        # Encode bản đã cắt (cropped) để gửi vào Stress Service
-        crop_buffer = io.BytesIO()
-        sf.write(crop_buffer, y_cropped, sr, format='WAV')
-        crop_buffer.seek(0)
-        cropped_audio_bytes = crop_buffer.read()
-
-        # 4. CHẠY STRESS DETECTION (Trên file audio đã được Smart Crop)
-        stress_result = stress_service.predict(cropped_audio_bytes, word)
+        # 3. CHẠY STRESS DETECTION VỚI BIÊN GIỚI FORCED ALIGNMENT
+        # Truyền trực tiếp alignment từ GOP để Stress xác định đúng ranh giới âm tiết và nguyên âm
+        stress_result = stress_service.predict(
+            clean_audio_bytes,
+            word,
+            alignments=gop_result.get("alignment")
+        )
 
         if "error" in stress_result:
             raise HTTPException(500, f"Stress Error: {stress_result['error']}")
 
-        # --- TỔNG HỢP KẾT QUẢ (Logic cũ giữ nguyên) ---
-
-        # GOP Scores
+        # 4. TỔNG HỢP KẾT QUẢ
+        # GOP Scores (Map sang format chi tiết cho UI)
         phones_score = {}
         for k, v in gop_result['details'].items():
+            # Trả về gop_score (LPR) cho UI
             phones_score[k] = v['gop_score']
 
         # Overall Score
         if "overall_score" in gop_result and gop_result["overall_score"] is not None:
-            overall_score = gop_result["overall_score"]
+            overall_score = float(gop_result["overall_score"])
         else:
             avg_gop = gop_result.get('average_gop', 0)
-            overall_score = max(0, min(100, np.exp(avg_gop) * 100))
+            overall_score = max(0.0, min(100.0, float(np.exp(avg_gop) * 100)))
 
         # Stress Processing
-        truth_stress = get_truth_stress(word)
-        pred_probs = stress_result['raw_scores']
-        pred_stress = [0] * len(pred_probs)
+        truth_stress = stress_result.get("truth", get_truth_stress(word))
+        pred_stress = stress_result.get("infer", [0] * len(truth_stress))
+        stress_conf = float(stress_result.get("confidence", stress_result.get("stress_probability", 0.8)))
 
-        if pred_probs:
-            max_idx = np.argmax(pred_probs)
-            pred_stress[max_idx] = 1
-
-        # Fix length mismatch
+        # Đảm bảo độ dài match với truth
         target_len = len(truth_stress)
-        current_len = len(pred_stress)
-        if current_len > target_len:
+        if len(pred_stress) > target_len:
             pred_stress = pred_stress[:target_len]
-        elif current_len < target_len:
-            pred_stress = pred_stress + [0] * (target_len - current_len)
+        elif len(pred_stress) < target_len:
+            pred_stress = pred_stress + [0] * (target_len - len(pred_stress))
 
         return {
             "status": "success",
@@ -173,10 +153,15 @@ async def assess_pronunciation(
             "stress": {
                 "truth": truth_stress,
                 "infer": pred_stress,
-                "confidence": stress_result['stress_probability'],
+                "confidence": round(stress_conf, 3),
                 "syllable_count": target_len
             },
-            "overall_score": round(overall_score, 1)
+            "overall_score": round(overall_score, 1),
+            "details": {
+                "phoneme_details": gop_result.get("details", {}),
+                "syllable_details": stress_result.get("syllables", []),
+                "speech_bounds": gop_result.get("speech_bounds", {})
+            }
         }
 
     except Exception as e:

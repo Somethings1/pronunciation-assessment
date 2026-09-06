@@ -3,3 +3,5 @@ server/pronunciation_assessment.egg-info
 *__pycache__*
 *.DS_Store
 .ipynb_checkpoints/
+*.wav
+test_samples/

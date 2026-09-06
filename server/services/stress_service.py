@@ -137,12 +137,19 @@ class StressEvaluator:
 
                 scores = pred_sq
             except Exception as e:
-                print(f"⚠️ Model inference failed ({e}). Falling back to Acoustic Prominence Engine.")
+                print(f"⚠️ Model inference failed ({e}). Falling back to Acoustic Prominence.")
                 scores = None
 
-        if scores is None:
-            # Acoustic prominence sequential scoring (Yarra et al. 2019, Mallela et al. 2024)
-            prom_scores = np.array([s.get("prominence_score", 0.0) for s in debug_data], dtype=np.float64)
+        # Acoustic prominence sequential scoring (Yarra et al. 2019, Mallela et al. 2024)
+        prom_scores = np.array([s.get("prominence_score", 0.0) for s in debug_data], dtype=np.float64)
+
+        if scores is not None:
+            # Standardize both distributions before ensemble
+            scores_norm = (scores - np.mean(scores)) / (np.std(scores) + 1e-6)
+            prom_norm = (prom_scores - np.mean(prom_scores)) / (np.std(prom_scores) + 1e-6)
+            combined_scores = 0.4 * scores_norm + 0.6 * prom_norm
+            scores = combined_scores
+        else:
             scores = prom_scores
 
         # Convert scores to probabilities via softmax
